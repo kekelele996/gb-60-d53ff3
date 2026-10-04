@@ -1,0 +1,110 @@
+services:
+  postgres:
+    container_name: flower-shop-postgres
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-flower_shop}
+      POSTGRES_USER: ${POSTGRES_USER:-flower}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flower123}
+    ports:
+      - "${POSTGRES_PORT:-5601}:5432"
+    volumes:
+      - flower-shop-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-flower} -d ${POSTGRES_DB:-flower_shop}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - flower-shop-network
+    restart: unless-stopped
+
+  redis:
+    container_name: flower-shop-redis
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6501}:6379"
+    volumes:
+      - flower-shop-redis-data:/data
+    networks:
+      - flower-shop-network
+    restart: unless-stopped
+
+  minio:
+    container_name: flower-shop-minio
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - flower-shop-minio-data:/data
+    networks:
+      - flower-shop-network
+    restart: unless-stopped
+
+  backend:
+    container_name: flower-shop-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: ${POSTGRES_USER:-flower}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-flower123}
+      DATABASE_NAME: ${POSTGRES_DB:-flower_shop}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-your-jwt-secret-key-change-in-production}
+      JWT_EXPIRES_IN: 1h
+      REFRESH_TOKEN_EXPIRES_IN: 7d
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET: flower-shop
+    ports:
+      - "${BACKEND_PORT:-3101}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    networks:
+      - flower-shop-network
+    restart: unless-stopped
+
+  frontend:
+    container_name: flower-shop-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-8101}:80"
+    depends_on:
+      - backend
+    networks:
+      - flower-shop-network
+    restart: unless-stopped
+
+volumes:
+  flower-shop-postgres-data:
+    name: flower-shop-postgres-data
+  flower-shop-redis-data:
+    name: flower-shop-redis-data
+  flower-shop-minio-data:
+    name: flower-shop-minio-data
+
+networks:
+  flower-shop-network:
+    name: flower-shop-network
+    driver: bridge
